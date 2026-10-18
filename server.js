@@ -88,6 +88,22 @@ function dbRun(sql, params = []) {
     });
 }
 
+// Enrolment codes are stored only as SHA-256 hashes (see setup.js), so the
+// server hashes the submitted code and compares it to the stored hash in
+// constant time. This avoids leaking the stored value through timing.
+function hashCode(code) {
+    return crypto.createHash('sha256').update(code, 'utf8').digest('hex');
+}
+
+function codeMatches(submittedCode, storedHash) {
+    const submitted = Buffer.from(hashCode(submittedCode), 'hex');
+    const stored = Buffer.from(storedHash, 'hex');
+
+    if (submitted.length !== stored.length) return false;
+
+    return crypto.timingSafeEqual(submitted, stored);
+}
+
 function requireLogin(req, res, next) {
     if (!req.session.user) {
         return res.status(401).json({ error: 'Please log in first.' });
@@ -193,12 +209,18 @@ app.post('/api/register/options', asyncRoute(async (req, res) => {
     }
 
     const user = await dbGet(
-        `SELECT id, name, role FROM users
-         WHERE id = ? AND enrolment_code = ?`,
-        [userId, enrolmentCode]
+        `SELECT id, name, role, enrolment_code_hash FROM users
+         WHERE id = ?`,
+        [userId]
     );
 
-    if (!user) {
+    // One generic message for both cases: an unknown user ID and a wrong code
+    // are indistinguishable, so the endpoint cannot be used to enumerate accounts.
+    if (
+        !user ||
+        !user.enrolment_code_hash ||
+        !codeMatches(enrolmentCode, user.enrolment_code_hash)
+    ) {
         return res.status(400).json({
             error: 'Invalid user ID or enrolment code.'
         });
@@ -239,12 +261,14 @@ app.post('/api/register/verify', asyncRoute(async (req, res) => {
     const { userId, response } = req.body;
 
     const user = await dbGet(
-        `SELECT id, name, role, enrolment_code
+        `SELECT id, name, role, enrolment_code_hash
          FROM users WHERE id = ?`,
         [userId]
     );
 
-    if (!user || !user.enrolment_code) {
+    // A missing hash means the code was already consumed at an earlier
+    // registration, so this account is no longer open for enrolment.
+    if (!user || !user.enrolment_code_hash) {
         return res.status(400).json({
             error: 'Registration is unavailable for this account.'
         });
@@ -281,9 +305,9 @@ app.post('/api/register/verify', asyncRoute(async (req, res) => {
         ]
     );
 
-    // The enrolment code is single-use.
+    // The enrolment code is single-use: clearing the hash closes enrolment.
     await dbRun(
-        'UPDATE users SET enrolment_code = NULL WHERE id = ?',
+        'UPDATE users SET enrolment_code_hash = NULL WHERE id = ?',
         [user.id]
     );
 
@@ -421,6 +445,51 @@ app.get('/api/grades', requireLogin, asyncRoute(async (req, res) => {
     } else {
         return res.status(403).json({ error: 'Access denied.' });
     }
+
+    res.json({ grades });
+}));
+
+// Per-student grade lookup by ID (test T3).
+// A student may read only their OWN record: the identity in the URL is
+// compared against the authenticated session, never against client input.
+// A lecturer may read only records for the course they are assigned to.
+app.get('/api/students/:id/grades', requireLogin, asyncRoute(async (req, res) => {
+    const targetId = req.params.id;
+    const user = req.session.user;
+
+    if (user.role === 'student') {
+        // Ownership check. The message reveals nothing about the other student.
+        if (user.id !== targetId) {
+            return res.status(403).json({
+                error: 'You may only view your own grades.'
+            });
+        }
+    } else if (user.role === 'lecturer') {
+        // Course-assignment check.
+        const assigned = await dbGet(
+            `SELECT 1 AS allowed FROM grades
+             WHERE student_id = ?
+               AND course_code = 'IS451'
+               AND lecturer_id = ?`,
+            [targetId, user.id]
+        );
+
+        if (!assigned) {
+            return res.status(403).json({
+                error: 'This student is not in your assigned course.'
+            });
+        }
+    } else {
+        return res.status(403).json({ error: 'Access denied.' });
+    }
+
+    const grades = await dbAll(
+        `SELECT g.student_id, u.name, g.course_code, g.grade
+         FROM grades g
+         JOIN users u ON u.id = g.student_id
+         WHERE g.student_id = ?`,
+        [targetId]
+    );
 
     res.json({ grades });
 }));
