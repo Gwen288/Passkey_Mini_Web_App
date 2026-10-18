@@ -8,12 +8,7 @@ const db = new sqlite3.Database('./portal.db');
 //
 // Each account is provisioned with a random, single-use enrolment code that is
 // printed ONCE when this script runs. Only a SHA-256 hash of the code is stored
-// in the database, exactly like a password reset token: the code itself exists
-// in neither the repository nor the database file.
-//
-// Why: the enrolment code is the only thing gating account claim. If it were
-// hard-coded here and this file were published, anyone reading the repository
-// could claim the privileged Lecturer account (L1) before its real owner.
+// in the database, exactly like a password reset token.
 // ---------------------------------------------------------------------------
 
 function generateEnrolmentCode(userId) {
@@ -31,14 +26,14 @@ const accounts = [
 ];
 
 db.serialize(() => {
-    // Recreate the schema from scratch so this script is safely re-runnable and
+    // Recreates the schema from scratch so this script is safely re-runnable and
     // always produces a clean demonstration dataset.
     db.run(`DROP TABLE IF EXISTS credentials`);
     db.run(`DROP TABLE IF EXISTS grades`);
     db.run(`DROP TABLE IF EXISTS users`);
 
     // 1. Users table.
-    //    enrolment_code_hash holds a SHA-256 hash, never the code itself.
+    //    enrolment_code_hash holds a SHA-256.
     db.run(`
         CREATE TABLE users (
             id TEXT PRIMARY KEY,
@@ -51,7 +46,7 @@ db.serialize(() => {
 
     // 2. Registered passkey public credentials.
     //    Only the PUBLIC key is stored; the private key stays in the
-    //    user's authenticator and is never sent to this server.
+    //    user's authenticator.
     db.run(`
         CREATE TABLE credentials (
             credential_id TEXT PRIMARY KEY,

@@ -17,7 +17,7 @@ Microsoft Edge at `http://localhost:3000`.
 the setup script 
 *Create passkey* : macOS Touch ID prompt appeared and *"Passkey registered
 successfully. You can now log in." is the expected response.
-Then *Continue with passkey* press your Touch ID which shows the dashboard.
+Then *Continue with passkey* press your Touch ID which then shows the dashboard after a successful login.
 
 **Result: PASS.** The macOS system authenticator prompt is the evidence that this is a real
 WebAuthn ceremony rather than a simulated PIN or fingerprint dialog.
